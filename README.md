@@ -22,6 +22,22 @@ Tagged renders inject the result as `<script id="delang-result" type="applicatio
 
 > Known wrinkle: a bare tag with no URL (e.g. `/zh`, `/meow`) falls through to the SPA, because `normalizeTarget` requires an `https?://` scheme or a `.` in the host before the first `/`.
 
+> Query strings on the target survive routing. A target URL containing `?` (e.g. an HN `?id=`) has that query relocated to the delang page's own search by the browser; `parseRoute` splits it back off and re-attaches it to the target.
+
+---
+
+## Hacker News threads
+
+Delangling a Hacker News thread (`news.ycombinator.com/item?id=…`) produces a three-part page instead of a plain extract:
+
+1. **The article** — the link to the original article is pulled out of defuddle's HN output and delang-ed on its own (its title becomes the page H1). For a text post (Ask/Show HN) with no external link, the post body is used instead.
+2. **Comment summary** — Gemini summarizes the discussion and categorizes the viewpoints (named categories, with the key commenters in each). When a language is set the summary is written in that language; with no language, no language instruction is sent.
+3. **The comments** — the comment blockquotes from defuddle, translated when a language is set.
+
+The three parts are joined with `---` separators. HN threads always need `GEMINI_API_KEY` (for the summary), even with no language. Each part degrades independently: a paywalled article yields a fallback note, a failed summary is omitted, and a failed comment translation falls back to the original comments.
+
+Detection (`isHnItem` in `worker/index.ts`) keys on hostname `news.ycombinator.com` + path `/item`; everything else uses the plain extract/translate path.
+
 ---
 
 ## Getting started
