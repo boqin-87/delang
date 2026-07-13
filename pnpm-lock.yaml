@@ -18,8 +18,8 @@ importers:
         specifier: ^5.2.8
         version: 5.2.8
       '@opticlm/streamup':
-        specifier: 1.1.0
-        version: 1.1.0(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^1.1.1
+        version: 1.1.1(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1131,8 +1131,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@opticlm/streamup@1.1.0':
-    resolution: {integrity: sha512-3hzjAwATykAE+Ajpg4xPzIivdkAMO2UFex3JG5uHac8CuToPF/2k9BBFYDqOljTuXE1QAlTSqTKbEo2suF86BA==}
+  '@opticlm/streamup@1.1.1':
+    resolution: {integrity: sha512-oR0d2A3laZn82MQ7bI2TTFtCweJCTjds/mp//Lc5V9g1TPuiejJ56mClzIdMxwHGdsaVdXEP7BtHjPy+8QahRw==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       katex: '*'
@@ -4402,7 +4402,7 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@opticlm/streamup@1.1.0(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@opticlm/streamup@1.1.1(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       hast-util-from-html-isomorphic: 2.0.0
       hast-util-to-jsx-runtime: 2.3.6

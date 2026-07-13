@@ -5,6 +5,7 @@ export function ResultView({ data }: { data: DelangResult }) {
   return (
     <div className="typeset typeset-docs max-w-2xl mx-auto my-8">
       <Streamup>{data.markdown}</Streamup>
+      <hr />
       <footer>
         <a href={data.url}>{data.meta.domain || data.url}</a>
         {data.meta.author ? ` · ${data.meta.author}` : null}
