@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
+    "deploy:personal": "vite build && wrangler deploy --config wrangler.personal.jsonc",
     "test": "vitest run",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types"

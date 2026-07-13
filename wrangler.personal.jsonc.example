@@ -1,0 +1,28 @@
+// Personal/local wrangler config — copy to `wrangler.personal.jsonc` and edit.
+// `wrangler.personal.jsonc` is gitignored (see .gitignore), so YOUR route never
+// lands in the shared committed `wrangler.jsonc`. Used by `pnpm deploy:personal`.
+//
+// Why this file exists: wrangler has no native config-file merge/override (no
+// `wrangler.local.jsonc`), and `wrangler deploy --config` takes a SINGLE path.
+// So decoupling the personal route means keeping a separate gitignored file and
+// pointing `--config` at it. See README.md > Deployment.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "delang",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "delang.eflx.top", "custom_domain": true }],
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist/client/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "vars": {
+    "GEMINI_MODEL": "gemini-3.1-flash-lite"
+  }
+}

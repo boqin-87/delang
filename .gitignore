@@ -165,3 +165,8 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# Personal wrangler config (carries your own custom-domain route, e.g.
+# delang.eflx.top) so it stays out of the shared committed wrangler.jsonc.
+wrangler.personal.jsonc
+!wrangler.personal.jsonc.example

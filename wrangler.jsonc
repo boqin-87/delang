@@ -4,7 +4,11 @@
   "main": "worker/index.ts",
   "compatibility_date": "2025-05-01",
   "compatibility_flags": ["nodejs_compat"],
-  "routes": [{ "pattern": "delang.eflx.top", "custom_domain": true }],
+  // No `routes` here on purpose: this committed config is shared and runs fine
+  // for `pnpm dev` and `workers.dev` deploys without a custom domain. Put your
+  // personal custom-domain route (e.g. delang.eflx.top) in a gitignored
+  // `wrangler.personal.jsonc` and deploy with `pnpm deploy:personal`.
+  // See README.md > Deployment for details.
   "observability": {
     "enabled": true
   },
