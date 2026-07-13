@@ -491,7 +491,7 @@ function escapeJsonForScript(value: unknown): string {
 // Take the SPA's built index.html (which already references the hashed
 // Vite assets) and inject the result JSON so the page renders directly for
 // a bookmarked GET while still hydrating with the SPA bundle.
-function injectResultIntoShell(
+export function injectResultIntoShell(
   shellHtml: string,
   result: DelangResult,
   language: string | null,
@@ -499,21 +499,33 @@ function injectResultIntoShell(
   const json = escapeJsonForScript(result);
   const block = `\n    <script id="delang-result" type="application/json">${json}</script>`;
   let html = shellHtml;
-  // Inject the result block right after the root mount point.
+  // Inject the result block right after the root mount point. Use FUNCTION
+  // replacements, not string replacements: a string replacement interprets
+  // $' / $` / $& / $n inside the replacement, and `block` embeds the page
+  // markdown verbatim. A page whose bash example has `--data-raw $'{"insert":…}`
+  // (bash ANSI-C quoting) made `$'` expand to the shell's own tail after the
+  // root div, splicing raw `</body></html>` into the middle of the result JSON,
+  // breaking JSON.parse in the browser so the SPA fell back to <Home>. A
+  // function returns its value literally, with no `$` interpretation.
   if (/<div id="root"[^>]*><\/div>/i.test(html)) {
-    html = html.replace(/(<div id="root"[^>]*><\/div>)/i, `$1${block}`);
+    html = html.replace(
+      /(<div id="root"[^>]*><\/div>)/i,
+      (_m, g1) => `${g1}${block}`,
+    );
   } else {
-    html = html.replace(/<\/body>/i, `${block}\n  </body>`);
+    html = html.replace(/<\/body>/i, () => `${block}\n  </body>`);
   }
   // Bind the <html lang=...> and <title> to the (possibly translated) result
   // so the bookmarked page has a meaningful title without waiting for hydration.
+  // Function replacements again — `language` is an arbitrary user-supplied tag
+  // and `result.title` is upstream-controlled, so either could contain `$'`.
   if (/<html\b[^>]*>/i.test(html) && language) {
-    html = html.replace(/<html\b[^>]*>/i, `<html lang="${language}">`);
+    html = html.replace(/<html\b[^>]*>/i, () => `<html lang="${language}">`);
   }
   if (result.title && /<title>[\s\S]*?<\/title>/i.test(html)) {
     html = html.replace(
       /<title>[\s\S]*?<\/title>/i,
-      `<title>${result.title}</title>`,
+      () => `<title>${result.title}</title>`,
     );
   }
   return html;

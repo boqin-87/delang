@@ -5,8 +5,10 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import type { DelangResult } from "../worker";
 import worker, {
   extractArticleUrl,
+  injectResultIntoShell,
   isHnItem,
   parseRoute,
   splitHnContent,
@@ -165,6 +167,73 @@ describe("extractArticleUrl", () => {
   it("returns null when there is no link", () => {
     expect(extractArticleUrl("just text, no link")).toBe(null);
     expect(extractArticleUrl("")).toBe(null);
+  });
+});
+
+describe("injectResultIntoShell", () => {
+  // A shell shaped like the real built index.html: <html>/<title> up front,
+  // the root mount point, then a non-empty tail after it. That tail is exactly
+  // what `$'` would splice into the JSON under the bug.
+  const shell =
+    "<!doctype html><html><head><title>delang</title></head><body>" +
+    '<div id="root"></div>\n  </body>\n</html>\n';
+
+  function makeResult(over: Partial<DelangResult> = {}): DelangResult {
+    return {
+      title: "t",
+      markdown: "body",
+      lang: null,
+      url: "https://example.com/x",
+      meta: { domain: "example.com", published: "", author: "", wordCount: 0 },
+      ...over,
+    };
+  }
+
+  function extractResultJson(html: string): DelangResult {
+    const m = html.match(
+      /<script id="delang-result"[^>]*>([\s\S]*?)<\/script>/,
+    );
+    if (!m) throw new Error("delang-result script not found");
+    return JSON.parse(m[1]) as DelangResult;
+  }
+
+  it("keeps $' / $` / $& / $n in the markdown out of the replacement string", () => {
+    // The Manticore auto-embeddings page has `--data-raw $'{"insert":…}` in a
+    // bash block. With a string replacement, `$'` expands to the shell tail
+    // after the root div and splices `</body></html>` into the middle of the
+    // JSON, so JSON.parse threw and the SPA fell back to <Home>.
+    const tricky =
+      '--data-raw $\'{"insert":1}\nprices $5 and $150, match $& and $` and $1';
+    const html = injectResultIntoShell(
+      shell,
+      makeResult({ markdown: tricky }),
+      null,
+    );
+    expect(extractResultJson(html).markdown).toBe(tricky);
+  });
+
+  it("keeps $' in the title out of the replacement string", () => {
+    const title = "Title with $' and $& and $1 splice";
+    const html = injectResultIntoShell(shell, makeResult({ title }), null);
+    expect(html).toContain(`<title>${title}</title>`);
+    expect(() => extractResultJson(html)).not.toThrow();
+  });
+
+  it("keeps $' in the language tag out of the replacement string", () => {
+    const html = injectResultIntoShell(shell, makeResult(), "$'");
+    expect(html).toContain('<html lang="$\'">');
+  });
+
+  it("injects before </body> and still escapes $' when there is no root div", () => {
+    const noRoot =
+      "<!doctype html><html><head><title>delang</title></head><body>hi</body></html>";
+    const tricky = '--data-raw $\'{"x":1}';
+    const html = injectResultIntoShell(
+      noRoot,
+      makeResult({ markdown: tricky }),
+      null,
+    );
+    expect(extractResultJson(html).markdown).toBe(tricky);
   });
 });
 
