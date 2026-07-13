@@ -62,6 +62,9 @@ function Home() {
           {`javascript:void(location.href='${window.location.origin}/${lang.trim().length > 0 ? `${lang}/` : ""}'+location.href.replace(/^https?:\\/\\//,%27%27))`}
         </code>
       </p>
+      <p>
+        (Press <kbd>d</kbd> to toggle dark mode)
+      </p>
     </div>
   );
 }
