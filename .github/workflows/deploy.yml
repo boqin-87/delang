@@ -34,11 +34,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
-
       - name: Build application
         run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
 
       - name: Deploy Worker
         run: pnpm exec wrangler deploy --config wrangler.production.jsonc
