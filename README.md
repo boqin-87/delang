@@ -24,7 +24,7 @@ delang turns any article URL into a clean, translated reading page.
 ## How does it work
 
 1. Retrieve the Markdown using defuddle.
-2. If a language is specified, translate it using Gemini; by default, the Gemini Flash Lite model is used.
+2. If a language is specified, translate it through an OpenAI-compatible Chat Completions API. The provider and model are configurable, so the same code works with Grok2API, OpenAI GPT, and xAI Grok.
 3. Render the Markdown using [Streamup](https://github.com/OpticLM/streamup); the styling is determined by shadcn/typeset. You can adjust and preview it [here](https://ui.shadcn.com/typeset), then modify typeset.css in the codebase.
 
 ---
@@ -40,10 +40,20 @@ pnpm dev
 Create your local secrets file (gitignored):
 
 ```sh
-cp ".dev copy.example" .dev.vars   # then fill in GEMINI_API_KEY="..."
+cp ".dev copy.example" .dev.vars   # then fill in LLM_API_KEY="..."
 ```
 
-`.dev.vars` holds `GEMINI_API_KEY` for local dev. It's gitignored (`.dev.vars*` is ignored, `.dev.vars.example` is kept).
+`.dev.vars` holds the local LLM configuration. It is gitignored (`.dev.vars*` is ignored, `.dev.vars.example` is kept).
+
+The Worker uses these variables:
+
+| Variable | Example | Secret |
+| --- | --- | --- |
+| `LLM_BASE_URL` | `https://grok.6661993.xyz/v1` | No |
+| `LLM_MODEL` | `grok-4.5` | No |
+| `LLM_API_KEY` | Provider API key | Yes |
+
+`LLM_BASE_URL` can also be `https://api.openai.com/v1` for GPT or `https://api.x.ai/v1` for Grok. Set `LLM_MODEL` to a model available from that provider. A complete `/chat/completions` endpoint is also accepted.
 
 ## Deployment
 
@@ -63,7 +73,7 @@ delang deploys as a single Worker. The committed `wrangler.jsonc` is shared and 
 2. Set the production secret:
 
    ```sh
-   wrangler secret put GEMINI_API_KEY
+   wrangler secret put LLM_API_KEY
    # paste the value from your .dev.vars
    ```
 

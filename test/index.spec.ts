@@ -7,10 +7,13 @@ import {
 import { describe, expect, it } from "vitest";
 import type { DelangResult } from "../worker";
 import worker, {
+  extractChatCompletionText,
   extractArticleUrl,
   injectResultIntoShell,
   isHnItem,
+  llmGenerate,
   parseRoute,
+  resolveChatCompletionsEndpoint,
   splitHnContent,
 } from "../worker";
 
@@ -18,7 +21,7 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 // A stub for the ASSETS binding, used for the SPA-delegation test. The
 // integration render/api paths are verified separately via `wrangler dev`
-// (they exercise defuddle + Gemini, which don't load cleanly in the
+// (they exercise defuddle + the configured LLM, which don't load cleanly in the
 // pool-workers test runtime).
 function stubAssets(): { fetch: (req: RequestInfo | URL) => Response } {
   return {
@@ -170,6 +173,127 @@ describe("extractArticleUrl", () => {
   });
 });
 
+describe("OpenAI-compatible chat completions", () => {
+  const providers = [
+    {
+      provider: "grok2api",
+      baseUrl: "https://grok.6661993.xyz/v1",
+      model: "grok-4.5",
+    },
+    {
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+    },
+    {
+      provider: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      model: "grok-3",
+    },
+  ] as const;
+
+  it.each(providers)(
+    "resolves the $provider chat-completions endpoint",
+    ({ baseUrl }) => {
+      expect(resolveChatCompletionsEndpoint(baseUrl)).toBe(
+        `${baseUrl}/chat/completions`,
+      );
+    },
+  );
+
+  it("does not append chat/completions to a complete endpoint", () => {
+    expect(
+      resolveChatCompletionsEndpoint(
+        "https://api.openai.com/v1/chat/completions",
+      ),
+    ).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  it.each(providers)(
+    "sends the $provider OpenAI-compatible request contract",
+    async ({ baseUrl, model }) => {
+      const apiKey = "test-api-key";
+      const prompt = "Translate this text";
+      let requestUrl = "";
+      let requestInit: RequestInit | undefined;
+      const mockFetch = async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        requestUrl = String(input);
+        requestInit = init;
+        return Response.json({
+          choices: [{ message: { content: "translated" } }],
+        });
+      };
+
+      await expect(
+        llmGenerate(
+          prompt,
+          { baseUrl, model, apiKey },
+          mockFetch as typeof fetch,
+        ),
+      ).resolves.toBe("translated");
+
+      expect(requestUrl).toBe(`${baseUrl}/chat/completions`);
+      expect(requestInit?.method).toBe("POST");
+      const headers = new Headers(requestInit?.headers);
+      expect(headers.get("authorization")).toBe(`Bearer ${apiKey}`);
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(JSON.parse(String(requestInit?.body))).toEqual({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+      });
+    },
+  );
+
+  it("extracts text from string and array content responses", () => {
+    expect(
+      extractChatCompletionText({
+        choices: [{ message: { content: " translated text " } }],
+      }),
+    ).toBe("translated text");
+    expect(
+      extractChatCompletionText({
+        choices: [
+          {
+            message: {
+              content: [
+                { type: "text", text: "part one " },
+                { type: "text", text: "part two" },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBe("part one part two");
+  });
+
+  it("rejects a response with no assistant text", () => {
+    expect(() => extractChatCompletionText({ choices: [] })).toThrow(
+      "LLM returned no text",
+    );
+  });
+
+  it("includes the upstream status in non-2xx errors", async () => {
+    const mockFetch = async (): Promise<Response> =>
+      new Response("provider unavailable", { status: 503 });
+
+    await expect(
+      llmGenerate(
+        "Translate this text",
+        {
+          baseUrl: providers[0].baseUrl,
+          model: providers[0].model,
+          apiKey: "test-api-key",
+        },
+        mockFetch as typeof fetch,
+      ),
+    ).rejects.toThrow("LLM 503");
+  });
+});
+
 describe("injectResultIntoShell", () => {
   // A shell shaped like the real built index.html: <html>/<title> up front,
   // the root mount point, then a non-empty tail after it. That tail is exactly
@@ -257,12 +381,12 @@ describe("worker fetch handler", () => {
   });
 
   it("returns 500 when the API key is missing for a translating render route", async () => {
-    // Translating a page needs Gemini; a missing key should hard-fail before
+    // Translating a page needs the LLM; a missing key should hard-fail before
     // we attempt any extraction. (No-translation renders never need a key, so
     // they're covered separately below.)
     const keylessEnv = new Proxy(env as Env, {
       get(t, p) {
-        if (p === "GEMINI_API_KEY") return undefined;
+        if (p === "LLM_API_KEY") return undefined;
         return Reflect.get(t, p);
       },
     }) as Env;
@@ -273,17 +397,17 @@ describe("worker fetch handler", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(response.status).toBe(500);
-    expect(await response.text()).toBe("GEMINI_API_KEY not configured");
+    expect(await response.text()).toBe("LLM_API_KEY not configured");
   });
 
   it("does not require an API key for a no-translation render route", async () => {
     // A bare-URL render skips translation entirely, so a missing key must not
-    // produce the "GEMINI_API_KEY not configured" 500. The request will still
+    // produce the "LLM_API_KEY not configured" 500. The request will still
     // attempt an upstream fetch here (and 502 in the test sandbox, which has
     // no real network); the point is only that it's NOT the key-missing 500.
     const keylessEnv = new Proxy(env as Env, {
       get(t, p) {
-        if (p === "GEMINI_API_KEY") return undefined;
+        if (p === "LLM_API_KEY") return undefined;
         return Reflect.get(t, p);
       },
     }) as Env;
@@ -293,17 +417,17 @@ describe("worker fetch handler", () => {
       keylessEnv,
     );
     await waitOnExecutionContext(ctx);
-    expect(await response.text()).not.toBe("GEMINI_API_KEY not configured");
+    expect(await response.text()).not.toBe("LLM_API_KEY not configured");
     expect(response.status).not.toBe(500);
   });
 
   it("requires the API key for an HN render even without a language", async () => {
-    // An HN thread always needs Gemini for the comment summary, so a missing
+    // An HN thread always needs the LLM for the comment summary, so a missing
     // key hard-fails before any extraction — even with no language set. The
     // target's `?id=` must survive routing (verified by the parseRoute tests).
     const keylessEnv = new Proxy(env as Env, {
       get(t, p) {
-        if (p === "GEMINI_API_KEY") return undefined;
+        if (p === "LLM_API_KEY") return undefined;
         return Reflect.get(t, p);
       },
     }) as Env;
@@ -316,6 +440,6 @@ describe("worker fetch handler", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(response.status).toBe(500);
-    expect(await response.text()).toBe("GEMINI_API_KEY not configured");
+    expect(await response.text()).toBe("LLM_API_KEY not configured");
   });
 });

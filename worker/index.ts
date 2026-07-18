@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import "./polyfill";
 import { parseHTML } from "linkedom";
 
@@ -11,8 +10,47 @@ async function loadDefuddle() {
   return mod.Defuddle;
 }
 
-const GEMINI_MODEL = env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+export interface LlmConfig {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+export function resolveChatCompletionsEndpoint(baseUrl: string): string {
+  const url = new URL(baseUrl.trim());
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("LLM_BASE_URL must use http or https");
+  }
+
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path.endsWith("/chat/completions")
+    ? path
+    : `${path}/chat/completions`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export function extractChatCompletionText(data: unknown): string {
+  const content = (
+    data as {
+      choices?: {
+        message?: {
+          content?: string | ({ text?: string } | string)[];
+        };
+      }[];
+    }
+  )?.choices?.[0]?.message?.content;
+
+  const text = Array.isArray(content)
+    ? content
+        .map((part) => (typeof part === "string" ? part : (part.text ?? "")))
+        .join("")
+    : (content ?? "");
+
+  if (!text.trim()) throw new Error("LLM returned no text");
+  return text.trim();
+}
 
 export type Route =
   | { kind: "spa" }
@@ -182,58 +220,59 @@ export async function extract(target: string): Promise<Extracted> {
   };
 }
 
-// Shared Gemini text-completion call. Both translation and the HN comment
-// summarization route through this so the request/response shape lives in one
-// place.
-async function geminiGenerate(prompt: string, apiKey: string): Promise<string> {
+// Shared OpenAI-compatible chat-completion call. Grok2API, OpenAI GPT, and
+// compatible Grok gateways all use this request/response contract.
+export async function llmGenerate(
+  prompt: string,
+  config: LlmConfig,
+  fetchImpl: typeof fetch = upstreamFetch,
+): Promise<string> {
   const body = {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    model: config.model,
+    messages: [{ role: "user", content: prompt }],
+    stream: false,
   };
 
-  const res = await upstreamFetch(GEMINI_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-goog-api-key": apiKey,
+  const res = await fetchImpl(
+    resolveChatCompletionsEndpoint(config.baseUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+  );
 
   if (!res.ok) {
-    throw new Error(`gemini ${res.status}: ${await res.text()}`);
+    throw new Error(`LLM ${res.status}: ${await res.text()}`);
   }
 
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const out =
-    data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ??
-    "";
-  if (!out) throw new Error(`gemini returned no text: ${JSON.stringify(data)}`);
-  return out.trim();
+  return extractChatCompletionText(await res.json());
 }
 
-async function geminiTranslate(
+async function llmTranslate(
   text: string,
   language: string,
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<string> {
   const prompt =
     `Translate the following text into language code "${language}". ` +
     "Return only the translation with no preamble, no explanation, and no surrounding quotes. " +
     "Preserve paragraph breaks and any markdown formatting.\n\n---\n\n" +
     text;
-  return geminiGenerate(prompt, apiKey);
+  return llmGenerate(prompt, config);
 }
 
 // Summarize and categorize an HN comment section. The output is self-contained
 // Markdown that begins with its own (localized, when `language` is set) level-2
 // heading, so the caller can drop it straight into the assembled page. With no
 // language we deliberately omit any language instruction per the feature spec.
-async function geminiSummarize(
+async function llmSummarize(
   commentsMarkdown: string,
   language: string | null,
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<string> {
   const langLine = language
     ? `Write the entire response (including the heading) in language code "${language}". `
@@ -249,7 +288,7 @@ async function geminiSummarize(
     `categorization of the discussion. Use ## / ### headings and bullet points. ${langLine}` +
     "Return only the Markdown analysis, no preamble.\n\n---\n\n" +
     commentsMarkdown;
-  return geminiGenerate(prompt, apiKey);
+  return llmGenerate(prompt, config);
 }
 
 export interface DelangResult {
@@ -282,7 +321,7 @@ export interface DelangResult {
 // For a text post (Ask/Show HN) the top link is the HN self-link and a post
 // body follows it; there is no external article. We split that into the
 // pre-comments part (article link / post body) and the comment blockquotes,
-// then assemble a three-part page: the delang-ed article, a Gemini summary
+// then assemble a three-part page: the delang-ed article, an LLM summary
 // & categorization of the comments, and the delang-ed comments themselves.
 
 export function isHnItem(target: string): boolean {
@@ -351,12 +390,12 @@ interface Part1 {
 async function delangArticle(
   articleUrl: string,
   lang: string | null,
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<Part1> {
   const art = await extract(articleUrl);
   const contentWithTitle = `# ${art.title}\n\n${art.content}`;
   const markdown = lang
-    ? await geminiTranslate(contentWithTitle, lang, apiKey)
+    ? await llmTranslate(contentWithTitle, lang, config)
     : contentWithTitle;
   return { markdown, title: art.title };
 }
@@ -367,14 +406,14 @@ async function delangTextPost(
   hnTitle: string,
   beforeComments: string,
   lang: string | null,
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<Part1> {
   const body = stripSelfLink(beforeComments);
   if (!body) return { markdown: "", title: hnTitle };
   const contentWithTitle = `# ${hnTitle}\n\n${body}`;
   if (!lang) return { markdown: contentWithTitle, title: hnTitle };
   try {
-    const markdown = await geminiTranslate(contentWithTitle, lang, apiKey);
+    const markdown = await llmTranslate(contentWithTitle, lang, config);
     return { markdown, title: hnTitle };
   } catch {
     return { markdown: contentWithTitle, title: hnTitle };
@@ -387,12 +426,12 @@ async function delangTextPost(
 async function delangComments(
   commentsMarkdown: string,
   lang: string | null,
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<string> {
   const withHeading = `## Comments\n\n${commentsMarkdown}`;
   if (!lang) return withHeading;
   try {
-    return await geminiTranslate(withHeading, lang, apiKey);
+    return await llmTranslate(withHeading, lang, config);
   } catch {
     return withHeading;
   }
@@ -405,29 +444,29 @@ function fallbackArticleNote(articleUrl: string, err: unknown): string {
 
 async function renderHnResult(
   route: { kind: "render"; lang: string | null; target: string },
-  apiKey: string,
+  config: LlmConfig,
 ): Promise<DelangResult> {
   const hn = await extract(route.target);
   const { beforeComments, commentsMarkdown } = splitHnContent(hn.content);
   const articleUrl = extractArticleUrl(beforeComments);
 
   // Three independent branches; each degrades on its own error so a paywalled
-  // article or a Gemini hiccup still yields the rest of the page.
+  // article or an LLM hiccup still yields the rest of the page.
   const part1: Promise<Part1> = articleUrl
-    ? delangArticle(articleUrl, route.lang, apiKey).catch((err) => ({
+    ? delangArticle(articleUrl, route.lang, config).catch((err) => ({
         markdown: fallbackArticleNote(articleUrl, err),
         title: hn.title,
       }))
-    : delangTextPost(hn.title, beforeComments, route.lang, apiKey);
+    : delangTextPost(hn.title, beforeComments, route.lang, config);
 
   const part2: Promise<string> = commentsMarkdown
-    ? geminiSummarize(commentsMarkdown, route.lang, apiKey).catch(
+    ? llmSummarize(commentsMarkdown, route.lang, config).catch(
         () => "## Discussion summary\n\n_Summary unavailable._",
       )
     : Promise.resolve("");
 
   const part3: Promise<string> = commentsMarkdown
-    ? delangComments(commentsMarkdown, route.lang, apiKey)
+    ? delangComments(commentsMarkdown, route.lang, config)
     : Promise.resolve("");
 
   const [p1, p2, p3] = await Promise.all([part1, part2, part3]);
@@ -451,16 +490,21 @@ async function renderHnResult(
 
 export async function renderResult(
   route: { kind: "render"; lang: string | null; target: string },
-  apiKey: string,
+  config: LlmConfig | null,
 ): Promise<DelangResult> {
   // HN threads render as article + comment summary + comments.
-  if (isHnItem(route.target)) return renderHnResult(route, apiKey);
+  if (isHnItem(route.target)) {
+    if (!config) throw new Error("LLM configuration not provided");
+    return renderHnResult(route, config);
+  }
 
   const extracted = await extract(route.target);
   const contentWithTitle = `# ${extracted.title}\n\n${extracted.content}`;
-  const markdown = route.lang
-    ? await geminiTranslate(contentWithTitle, route.lang, apiKey)
-    : contentWithTitle;
+  let markdown = contentWithTitle;
+  if (route.lang) {
+    if (!config) throw new Error("LLM configuration not provided");
+    markdown = await llmTranslate(contentWithTitle, route.lang, config);
+  }
 
   return {
     title: extracted.title,
@@ -567,15 +611,25 @@ export default {
       return new Response("method not allowed", { status: 405 });
     }
 
-    // HN threads always need Gemini (the comment summary), even with no
+    // HN threads always need an LLM (the comment summary), even with no
     // language; plain renders only need it for translation.
-    const needsKey = route.lang !== null || isHnItem(route.target);
-    if (!env.GEMINI_API_KEY && needsKey) {
-      return new Response("GEMINI_API_KEY not configured", { status: 500 });
+    const needsLlm = route.lang !== null || isHnItem(route.target);
+    let llmConfig: LlmConfig | null = null;
+    if (needsLlm) {
+      const required = ["LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY"] as const;
+      const missing = required.find((name) => !env[name]?.trim());
+      if (missing) {
+        return new Response(`${missing} not configured`, { status: 500 });
+      }
+      llmConfig = {
+        baseUrl: env.LLM_BASE_URL,
+        model: env.LLM_MODEL,
+        apiKey: env.LLM_API_KEY,
+      };
     }
 
     try {
-      const result = await renderResult(route, env.GEMINI_API_KEY);
+      const result = await renderResult(route, llmConfig);
       return await serveShellWithResult(request, env, result, route.lang);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
