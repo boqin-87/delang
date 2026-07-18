@@ -3,8 +3,9 @@
 // Runtime types generated with workerd@1.20260708.1 2025-05-01 nodejs_compat
 interface __BaseEnv_Env {
 	ASSETS: Fetcher;
-	GEMINI_MODEL: "gemini-3.1-flash-lite";
-	GEMINI_API_KEY: string;
+	LLM_BASE_URL: "https://grok.6661993.xyz/v1";
+	LLM_MODEL: "grok-4.5";
+	LLM_API_KEY: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -17,7 +18,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "GEMINI_MODEL" | "GEMINI_API_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "LLM_BASE_URL" | "LLM_MODEL" | "LLM_API_KEY">> {}
 }
 
 // Begin runtime types
